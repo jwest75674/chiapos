@@ -1,0 +1,109 @@
+From 3461c8d6a560abe63cc6b7cd834ef2bdfde451a1 Mon Sep 17 00:00:00 2001
+From: Ed-Yang <edwardyangyang@hotmail.com>
+Date: Sat, 8 May 2021 10:51:18 +0800
+Subject: [PATCH] mmap read
+
+---
+ src/disk.hpp   | 41 +++++++++++++++++++++++++++++++++++++++++
+ src/phase1.hpp |  4 +---
+ 2 files changed, 42 insertions(+), 3 deletions(-)
+
+diff --git a/src/disk.hpp b/src/disk.hpp
+index f8cebacb..b81af442 100644
+--- a/src/disk.hpp
++++ b/src/disk.hpp
+@@ -23,6 +23,10 @@
+ #include <thread>
+ #include <chrono>
+ 
++#ifndef _WIN32
++#include <sys/mman.h>
++#endif
++
+ // enables disk I/O logging to disk.log
+ // use tools/disk.gnuplot to generate a plot
+ #define ENABLE_LOGGING 0
+@@ -115,6 +119,16 @@ struct FileDisk {
+             f_ = ::_wfopen(filename_.c_str(), (flags & writeFlag) ? L"w+b" : L"r+b");
+ #else
+             f_ = ::fopen(filename_.c_str(), (flags & writeFlag) ? "w+b" : "r+b");
++
++    #ifdef USE_MMAP
++            // mmap
++            if (flags & writeFlag == 0) {
++                ::fseek(f_, 0L, SEEK_END);
++                map_length_ = ::ftell(f_);
++                ::fseek(f_, 0L, SEEK_SET);
++                map_ = (char *) mmap(NULL, map_length_, PROT_READ, MAP_PRIVATE, ::fileno(f_), 0);
++            }
++    #endif
+ #endif
+             if (f_ == nullptr) {
+                 std::string error_message =
+@@ -142,6 +156,20 @@ struct FileDisk {
+     void Close()
+     {
+         if (f_ == nullptr) return;
++
++    #ifndef _WIN32
++    #ifdef USE_MMAP
++        if (map_) {
++            int rv = munmap(map_, map_length_)
++            if (rv != 0)
++                printf("====> Close %s\n, munmap failed\n", filename_.c_str(), map_length_);
++        }
++        ::fseek(f_, 0L, SEEK_END);
++        int sz = ::ftell(f_);
++        // printf("====> Close %s\n, size = %d\n", filename_.c_str(), sz);
++    #endif
++    #endif
++
+         ::fclose(f_);
+         f_ = nullptr;
+         readPos = 0;
+@@ -169,6 +197,14 @@ struct FileDisk {
+ #endif
+                 bReading = true;
+             }
++    #ifndef _WIN32
++    #ifdef USE_MMAP
++            if (map_ != nullptr) {
++                memcpy(reinterpret_cast<char *>(memcache), map_ + begin, length);
++                amtread = length;
++            } else
++    #endif
++    #endif
+             amtread = ::fread(reinterpret_cast<char *>(memcache), sizeof(uint8_t), length, f_);
+             readPos = begin + amtread;
+             if (amtread != length) {
+@@ -243,6 +279,11 @@ struct FileDisk {
+     fs::path filename_;
+     FILE *f_ = nullptr;
+ 
++#ifdef USE_MMAP
++    char *map_ = nullptr;
++    size_t map_length_;
++#endif
++
+     static const uint8_t writeFlag = 0b01;
+     static const uint8_t retryOpenFlag = 0b10;
+ };
+diff --git a/src/phase1.hpp b/src/phase1.hpp
+index edace623..fe481b1e 100644
+--- a/src/phase1.hpp
++++ b/src/phase1.hpp
+@@ -558,13 +558,11 @@ void* F1thread(int const index, uint8_t const k, const uint8_t* id, std::mutex*
+         // to increase CPU efficency.
+         f1.CalculateBuckets(x, loopcount, f1_entries.get());
+         for (uint32_t i = 0; i < loopcount; i++) {
+-            uint8_t to_write[16];
+             uint128_t entry;
+ 
+             entry = (uint128_t)f1_entries[i] << (128 - kExtraBits - k);
+             entry |= (uint128_t)x << (128 - kExtraBits - 2 * k);
+-            Util::IntTo16Bytes(to_write, entry);
+-            memcpy(&(right_writer_buf[i * entry_size_bytes]), to_write, 16);
++            Util::IntTo16Bytes(&right_writer_buf[i * entry_size_bytes], entry);
+             right_writer_count++;
+             x++;
+         }
