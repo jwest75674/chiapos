@@ -1,0 +1,164 @@
+From 3e1545b2e8a847f6baa105e03d2f8f1339476d88 Mon Sep 17 00:00:00 2001
+From: Ostap Slavking <lemur73@bk.ru>
+Date: Mon, 17 May 2021 13:44:57 -0400
+Subject: [PATCH] Common template for inline vector implementation.
+
+Allows simplier using inline vectors of different sizes and types.
+
+Signed-off-by: Ostap Slavking <lemur73@bk.ru>
+If you like my commits cheer me with some chia here:
+xch16es77qggpwgzucqmmvhvgcueckmt9g3e7exa46vhmucz7z8j2a2spm7c7e
+---
+ src/bits.hpp   | 77 ++++++++++++++++++++++++++------------------------
+ tests/test.cpp | 32 +++++++++++++++++++++
+ 2 files changed, 72 insertions(+), 37 deletions(-)
+
+diff --git a/src/bits.hpp b/src/bits.hpp
+index 9180694d..32a97da6 100644
+--- a/src/bits.hpp
++++ b/src/bits.hpp
+@@ -27,61 +27,64 @@
+ // 64 * 2^16. 2^17 values, each value can store 64 bits.
+ #define kMaxSizeBits 8388608
+ 
+-// A stack vector of length 5, having the functions of std::vector needed for Bits.
+-struct SmallVector {
+-    typedef uint16_t size_type;
++template <class item_type, class size_type_arg, unsigned capacity>
++class InlineVector {
++  public:
+ 
+-    SmallVector() noexcept { count_ = 0; }
++    static_assert(std::is_integral<item_type>::value, "InlineVector only supports integral types");
+ 
+-    uint64_t& operator[](const uint16_t index) { return v_[index]; }
++    typedef size_type_arg size_type;
+ 
+-    uint64_t operator[](const uint16_t index) const { return v_[index]; }
++    item_type& operator[](const size_type index) {
++        assert(index < capacity);
++        return v_[index];
++    }
+ 
+-    void push_back(uint64_t value) { v_[count_++] = value; }
++    item_type operator[](const size_type index) const {
++        assert(index < capacity);
++        return v_[index];
++    }
+ 
+-    SmallVector& operator=(const SmallVector& other)
+-    {
++    void push_back(item_type value) {
++        assert(count_ < capacity);
++        v_[count_++] = value;
++    }
++
++    InlineVector& operator=(const InlineVector& other) & {
+         count_ = other.count_;
+         for (size_type i = 0; i < other.count_; i++) v_[i] = other.v_[i];
+         return (*this);
+     }
+ 
+-    size_type size() const noexcept { return count_; }
+-
+-    void resize(const size_type n) { count_ = n; }
+-
+-private:
+-    uint64_t v_[10];
+-    size_type count_;
+-};
+-
+-// A stack vector of length 1024, having the functions of std::vector needed for Bits.
+-// The max number of Bits that can be stored is 1024 * 64
+-struct ParkVector {
+-    typedef uint32_t size_type;
+-
+-    ParkVector() noexcept { count_ = 0; }
++    InlineVector& operator=(const std::vector<item_type>& other) & {
++        assert(other.size() <= capacity);
+ 
+-    uint64_t& operator[](const uint32_t index) { return v_[index]; }
+-
+-    uint64_t operator[](const uint32_t index) const { return v_[index]; }
+-
+-    void push_back(uint64_t value) { v_[count_++] = value; }
+-
+-    ParkVector& operator=(const ParkVector& other)
+-    {
+-        count_ = other.count_;
+-        for (size_type i = 0; i < other.count_; i++) v_[i] = other.v_[i];
++        count_ = other.size();
++        for (size_type i = 0; i < static_cast<size_type>(other.size()); i++) v_[i] = other[i];
+         return (*this);
+     }
+ 
+     size_type size() const noexcept { return count_; }
+ 
+-private:
+-    uint64_t v_[2048];
+-    size_type count_;
++    void resize(const size_type n) {
++        assert(n <= capacity);
++        count_ = n;
++    }
++
++    size_type max_size() const { return capacity; }
++
++  private:
++    item_type v_[capacity];
++    size_type count_ = 0;
+ };
+ 
++// A stack vector of length 10, having the functions of std::vector needed for Bits.
++using SmallVector = InlineVector<uint64_t, uint8_t, 10>;
++
++// A stack vector of length 2048, having the functions of std::vector needed for Bits.
++// The max number of Bits that can be stored is 2048 * 64
++using ParkVector = InlineVector<uint64_t, uint16_t, 2048>;
++
+ /*
+  * This class represents an array of bits. These are stored in an
+  * array of integers, allowing for efficient bit manipulations. The Bits class provides
+diff --git a/tests/test.cpp b/tests/test.cpp
+index 8ade0889..55964117 100644
+--- a/tests/test.cpp
++++ b/tests/test.cpp
+@@ -169,6 +169,38 @@ TEST_CASE("Util")
+ 
+ TEST_CASE("Bits")
+ {
++    SECTION("Inline Vector")
++    {
++         const size_t test_size = 16384;
++         InlineVector<uint64_t, uint16_t, test_size> test_vector;
++         for(size_t i = 0; i < test_vector.max_size(); i++)
++            test_vector.push_back(i & (64 - 1));
++
++         REQUIRE(test_vector.size() == test_size);
++         for(size_t i = 0; i < test_vector.size(); i++)
++            REQUIRE(test_vector[static_cast<uint16_t>(i)] == (i & (64 - 1)));
++
++         std::vector<uint64_t> std_vector;
++         for(size_t i = 0; i < test_size / 2; i++)
++             std_vector.push_back(test_size - i);
++
++         test_vector = std_vector;
++         REQUIRE(test_vector.size() == std_vector.size());
++
++         for(size_t i = 0; i < test_vector.size(); i++)
++            REQUIRE(test_vector[static_cast<uint16_t>(i)] == (test_size - i));
++
++         InlineVector<uint64_t, uint16_t, test_size> other_vector;
++         for(size_t i = 0; i < test_size / 2 + 256; i++)
++             other_vector.push_back(test_size + i);
++
++         test_vector = other_vector;
++         REQUIRE(test_vector.size() == other_vector.size());
++
++         for(size_t i = 0; i < test_vector.size(); i++)
++            REQUIRE(test_vector[static_cast<uint16_t>(i)] == (test_size + i));
++    }
++
+     SECTION("Slicing and manipulating")
+     {
+         Bits g = Bits(13271, 15);

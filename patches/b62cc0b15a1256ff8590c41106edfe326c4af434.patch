@@ -1,0 +1,29 @@
+From b62cc0b15a1256ff8590c41106edfe326c4af434 Mon Sep 17 00:00:00 2001
+From: xorinox <61642896+xorinox@users.noreply.github.com>
+Date: Tue, 30 Mar 2021 22:42:09 -0400
+Subject: [PATCH] Update plotter_disk.hpp
+
+Setting the rlimit also on Linux was necessary to make it work with 1024 buckets plus changing the number from 600 to 4096.
+---
+ src/plotter_disk.hpp | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/src/plotter_disk.hpp b/src/plotter_disk.hpp
+index 1e9a7e7e..419e75de 100644
+--- a/src/plotter_disk.hpp
++++ b/src/plotter_disk.hpp
+@@ -73,12 +73,11 @@ class DiskPlotter {
+         bool show_progress = false)
+     {
+         // Increases the open file limit, we will open a lot of files.
+-#ifndef _WIN32
+-        struct rlimit the_limit = {600, 600};
++        struct rlimit the_limit = {4096, 4096};
+         if (-1 == setrlimit(RLIMIT_NOFILE, &the_limit)) {
+             std::cout << "setrlimit failed" << std::endl;
+         }
+-#endif
++
+         if (k < kMinPlotSize || k > kMaxPlotSize) {
+             throw InvalidValueException("Plot size k= " + std::to_string(k) + " is invalid");
+         }
